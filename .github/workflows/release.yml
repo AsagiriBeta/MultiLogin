@@ -1,0 +1,67 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (example: 0.6.13)"
+        required: true
+        type: string
+      prerelease:
+        description: "Mark as prerelease"
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+
+      - name: Resolve release version
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            RAW_VERSION="${GITHUB_REF_NAME#v}"
+            TAG_NAME="${GITHUB_REF_NAME}"
+          else
+            RAW_VERSION="${{ inputs.version }}"
+            TAG_NAME="v${RAW_VERSION}"
+          fi
+          echo "RAW_VERSION=${RAW_VERSION}" >> "${GITHUB_ENV}"
+          echo "TAG_NAME=${TAG_NAME}" >> "${GITHUB_ENV}"
+
+      - name: Patch Gradle Repositories
+        run: |
+          sed -i '/https:\/\/maven.aliyun.com\/repository\/public/d' repositories
+          grep -q '^https:\/\/repo1.maven.org\/maven2$' repositories || echo 'https://repo1.maven.org/maven2' >> repositories
+
+      - name: Set plugin version
+        run: sed -i "s/^plugin_version=.*/plugin_version=${RAW_VERSION}/" gradle.properties
+
+      - name: Build release artifacts
+        run: ./gradlew --no-daemon shadowJar -Denv=final
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG_NAME }}
+          name: MultiLogin ${{ env.TAG_NAME }}
+          prerelease: ${{ inputs.prerelease || false }}
+          generate_release_notes: true
+          files: |
+            velocity/build/libs/MultiLogin-Velocity-*.jar
